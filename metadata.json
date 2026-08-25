@@ -1,0 +1,7 @@
+{
+  "name": "Hermes Mobile",
+  "description": "Autonomous on-device AI agent client with tool calling, persistent memory, scheduling, and multi-model support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
