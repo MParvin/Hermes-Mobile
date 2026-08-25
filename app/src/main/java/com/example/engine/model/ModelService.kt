@@ -56,12 +56,13 @@ class ModelService(private val repository: HermesRepository) {
 
     private suspend fun callGemini(systemPrompt: String, messages: List<ModelMessage>): ModelResponse {
         val apiKey = repository.getSetting("gemini_api_key", BuildConfig.GEMINI_API_KEY)
+        val model = repository.getSetting("gemini_model", "gemini-2.5-flash")
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
-            return generateLocalFallbackResponse(systemPrompt, messages, "Gemini (Offline Simulator / Configure API Key)")
+            return generateLocalFallbackResponse(systemPrompt, messages, "Gemini ($model / Offline Simulator)")
         }
 
         return try {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
             val root = JSONObject()
 
             // System instruction
@@ -86,7 +87,7 @@ class ModelService(private val repository: HermesRepository) {
             if (!response.isSuccessful) {
                 return ModelResponse(
                     content = "Gemini API error (HTTP ${response.code}): $responseBody",
-                    modelBadge = "Gemini 2.5 Flash",
+                    modelBadge = "Gemini $model",
                     error = "HTTP ${response.code}"
                 )
             }
@@ -100,13 +101,13 @@ class ModelService(private val repository: HermesRepository) {
 
             ModelResponse(
                 content = text,
-                modelBadge = "Gemini 2.5 Flash",
+                modelBadge = "Gemini $model",
                 rawResponse = responseBody
             )
         } catch (e: Exception) {
             ModelResponse(
                 content = "Error calling Gemini: ${e.message}",
-                modelBadge = "Gemini 2.5 Flash",
+                modelBadge = "Gemini $model",
                 error = e.message
             )
         }
@@ -114,10 +115,11 @@ class ModelService(private val repository: HermesRepository) {
 
     private suspend fun callClaude(systemPrompt: String, messages: List<ModelMessage>): ModelResponse {
         val apiKey = repository.getSetting("anthropic_api_key", "")
+        val model = repository.getSetting("anthropic_model", "claude-3-5-sonnet-20241022")
         if (apiKey.isBlank()) {
             return ModelResponse(
                 content = "Anthropic API Key not configured. Please enter your key in Settings or switch to Gemini / Local provider.",
-                modelBadge = "Claude 3.5 Sonnet",
+                modelBadge = "Claude ($model)",
                 error = "Missing API Key"
             )
         }
@@ -125,7 +127,7 @@ class ModelService(private val repository: HermesRepository) {
         return try {
             val url = "https://api.anthropic.com/v1/messages"
             val root = JSONObject().apply {
-                put("model", "claude-3-5-sonnet-20241022")
+                put("model", model)
                 put("max_tokens", 4096)
                 put("system", systemPrompt)
 
@@ -152,26 +154,27 @@ class ModelService(private val repository: HermesRepository) {
             val resp = httpClient.newCall(req).execute()
             val respStr = resp.body?.string() ?: ""
             if (!resp.isSuccessful) {
-                return ModelResponse("Claude API error: $respStr", "Claude 3.5 Sonnet", error = "HTTP ${resp.code}")
+                return ModelResponse("Claude API error: $respStr", "Claude ($model)", error = "HTTP ${resp.code}")
             }
 
             val json = JSONObject(respStr)
             val contentArray = json.optJSONArray("content")
             val text = contentArray?.optJSONObject(0)?.optString("text") ?: ""
 
-            ModelResponse(content = text, modelBadge = "Claude 3.5 Sonnet", rawResponse = respStr)
+            ModelResponse(content = text, modelBadge = "Claude ($model)", rawResponse = respStr)
         } catch (e: Exception) {
-            ModelResponse("Error calling Claude: ${e.message}", "Claude 3.5 Sonnet", error = e.message)
+            ModelResponse("Error calling Claude: ${e.message}", "Claude ($model)", error = e.message)
         }
     }
 
     private suspend fun callOpenAi(systemPrompt: String, messages: List<ModelMessage>): ModelResponse {
         val apiKey = repository.getSetting("openai_api_key", "")
         val baseUrl = repository.getSetting("openai_base_url", "https://api.openai.com/v1")
+        val model = repository.getSetting("openai_model", "gpt-4o")
         if (apiKey.isBlank()) {
             return ModelResponse(
                 content = "OpenAI API Key not configured. Please enter your key in Settings or switch to Gemini.",
-                modelBadge = "OpenAI GPT-4o",
+                modelBadge = "OpenAI ($model)",
                 error = "Missing API Key"
             )
         }
@@ -179,8 +182,8 @@ class ModelService(private val repository: HermesRepository) {
         return callOpenAiCompatible(
             baseUrl = "$baseUrl/chat/completions",
             apiKey = apiKey,
-            modelName = "gpt-4o",
-            badge = "OpenAI GPT-4o",
+            modelName = model,
+            badge = "OpenAI ($model)",
             systemPrompt = systemPrompt,
             messages = messages
         )

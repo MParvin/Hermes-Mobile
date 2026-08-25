@@ -195,8 +195,22 @@ class HermesRepository(private val database: HermesDatabase) {
         database.appSettingDao().setSetting(AppSettingEntity(key, value))
     }
 
+    suspend fun setSettingsBatch(settings: Map<String, String>) {
+        for ((key, value) in settings) {
+            database.appSettingDao().setSetting(AppSettingEntity(key, value))
+        }
+    }
+
     fun getAllSettings(): Flow<List<AppSettingEntity>> =
         database.appSettingDao().getAllSettings()
+
+    suspend fun isProviderEnabled(provider: ModelProviderType): Boolean {
+        return getSetting("provider_enabled_${provider.name}", "true").toBoolean()
+    }
+
+    suspend fun setProviderEnabled(provider: ModelProviderType, enabled: Boolean) {
+        setSetting("provider_enabled_${provider.name}", enabled.toString())
+    }
 
     suspend fun isKillSwitchActive(): Boolean {
         return getSetting("kill_switch_active", "false").toBoolean()

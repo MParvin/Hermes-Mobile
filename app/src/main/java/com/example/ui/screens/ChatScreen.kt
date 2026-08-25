@@ -96,7 +96,17 @@ fun ChatScreen(
     val isBusy by viewModel.isAgentBusy.collectAsState()
     val activePersonality by viewModel.activePersonality.collectAsState()
     val selectedModelProvider by viewModel.selectedModelProvider.collectAsState()
+    val allSettings by viewModel.allSettings.collectAsState()
     val listState = rememberLazyListState()
+
+    val currentModelName = when (selectedModelProvider) {
+        ModelProviderType.GEMINI -> allSettings["gemini_model"] ?: "gemini-2.5-flash"
+        ModelProviderType.CLAUDE -> allSettings["anthropic_model"] ?: "claude-3-5-sonnet"
+        ModelProviderType.OPENAI -> allSettings["openai_model"] ?: "gpt-4o"
+        ModelProviderType.OPENROUTER -> allSettings["openrouter_model"]?.substringAfterLast("/") ?: "hermes-3-405b"
+        ModelProviderType.LOCAL_CUSTOM -> allSettings["local_model_name"] ?: "hermes-3-8b"
+        ModelProviderType.MOA_MIXTURE -> "MoA Ensemble"
+    }
 
     var inputText by remember { mutableStateOf("") }
     var showPersonalitySheet by remember { mutableStateOf(false) }
@@ -138,7 +148,7 @@ fun ChatScreen(
             FilterChip(
                 selected = false,
                 onClick = { showPersonalitySheet = true },
-                label = { Text("⚡ ${selectedModelProvider.displayName} | ${activePersonality.name}", color = HermesAmber, fontSize = 11.sp) },
+                label = { Text("⚡ $currentModelName | ${activePersonality.name}", color = HermesAmber, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                 colors = FilterChipDefaults.filterChipColors(containerColor = Slate950)
             )
 
@@ -337,6 +347,16 @@ fun ChatScreen(
 
                 ModelProviderType.values().forEach { mp ->
                     val isSelected = mp == selectedModelProvider
+                    val isEnabled = allSettings["provider_enabled_${mp.name}"]?.toBoolean() ?: true
+                    val configuredModel = when (mp) {
+                        ModelProviderType.GEMINI -> allSettings["gemini_model"] ?: mp.defaultModel
+                        ModelProviderType.CLAUDE -> allSettings["anthropic_model"] ?: mp.defaultModel
+                        ModelProviderType.OPENAI -> allSettings["openai_model"] ?: mp.defaultModel
+                        ModelProviderType.OPENROUTER -> allSettings["openrouter_model"] ?: mp.defaultModel
+                        ModelProviderType.LOCAL_CUSTOM -> allSettings["local_model_name"] ?: mp.defaultModel
+                        ModelProviderType.MOA_MIXTURE -> mp.defaultModel
+                    }
+
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -360,18 +380,34 @@ fun ChatScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column {
-                                Text(
-                                    text = mp.displayName,
-                                    style = MaterialTheme.typography.titleSmall.copy(
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isSelected) HermesCyan else Color.White
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ProviderLogoBadge(provider = mp, size = 26)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = mp.displayName,
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isSelected) HermesCyan else Color.White
+                                            )
+                                        )
+                                        if (!isEnabled) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "(Disabled)",
+                                                style = MaterialTheme.typography.labelSmall.copy(color = HermesRed)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = configuredModel,
+                                        style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF64748B), fontFamily = FontFamily.Monospace)
                                     )
-                                )
-                                Text(
-                                    text = mp.defaultModel,
-                                    style = MaterialTheme.typography.labelSmall.copy(color = Color(0xFF64748B))
-                                )
+                                }
                             }
                             if (isSelected) {
                                 Text("ACTIVE", style = MaterialTheme.typography.labelSmall.copy(color = HermesCyan, fontWeight = FontWeight.Bold))

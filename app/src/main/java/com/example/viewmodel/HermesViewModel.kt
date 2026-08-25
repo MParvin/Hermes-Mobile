@@ -36,6 +36,8 @@ import org.json.JSONObject
 import java.util.Locale
 import java.util.UUID
 
+import kotlinx.coroutines.flow.map
+
 class HermesViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = HermesRepository.getInstance(application)
@@ -66,6 +68,10 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
     val toastMessage: StateFlow<String?> = _toastMessage.asStateFlow()
 
     // Data streams from Room
+    val allSettings: StateFlow<Map<String, String>> = repository.getAllSettings()
+        .map { list -> list.associate { it.key to it.value } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     val conversations: StateFlow<List<ConversationEntity>> = repository.getAllConversations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -108,6 +114,11 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch(Dispatchers.IO) {
             _isKillSwitchActive.value = repository.isKillSwitchActive()
+
+            val savedProvider = repository.getSetting("active_provider", "GEMINI")
+            try {
+                _selectedModelProvider.value = ModelProviderType.valueOf(savedProvider)
+            } catch (_: Exception) {}
 
             // Initialize default conversation if empty
             val conv = repository.getConversation("default_session")
@@ -195,6 +206,9 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setModelProvider(provider: ModelProviderType) {
         _selectedModelProvider.value = provider
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setSetting("active_provider", provider.name)
+        }
     }
 
     fun sendMessage(userText: String) {
@@ -383,10 +397,27 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun saveSetting(key: String, value: String) {
+    fun saveAllSettings(settings: Map<String, String>, toastMessage: String? = "Settings saved successfully") {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setSettingsBatch(settings)
+            if (toastMessage != null) {
+                _toastMessage.value = toastMessage
+            }
+        }
+    }
+
+    fun saveSetting(key: String, value: String, showToast: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.setSetting(key, value)
-            _toastMessage.value = "Settings updated"
+            if (showToast) {
+                _toastMessage.value = "Setting updated"
+            }
+        }
+    }
+
+    fun setProviderEnabled(provider: ModelProviderType, enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setProviderEnabled(provider, enabled)
         }
     }
 
