@@ -1,0 +1,177 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.0)'
+        required: false
+        default: ''
+        type: string
+      release_title:
+        description: 'Release Title (optional, defaults to tag)'
+        required: false
+        default: ''
+        type: string
+      is_draft:
+        description: 'Create as Draft Release'
+        required: false
+        default: false
+        type: boolean
+      is_prerelease:
+        description: 'Mark as Pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-release-apk:
+    name: Build & Publish Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Prepare Environment & Secrets
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          echo "=== Setting up environment files ==="
+          if [ -f ".env.example" ] && [ ! -f ".env" ]; then
+            cp .env.example .env
+          fi
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY" > .env
+          fi
+
+          echo "=== Setting up debug keystore ==="
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+            echo "Decoded debug.keystore from repository base64."
+          fi
+
+      - name: Configure Release Signing Keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 || secrets.KEYSTORE_BASE64 || '' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+        run: |
+          echo "=== Checking Release Keystore ==="
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
+            echo "Using custom release keystore from GitHub Secrets..."
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+          else
+            echo "No custom release keystore provided in secrets."
+            if [ -f "debug.keystore" ]; then
+              echo "Using debug keystore fallback for upload key to ensure valid APK signature..."
+              cp debug.keystore my-upload-key.jks
+            else
+              echo "Generating standard release keystore..."
+              keytool -genkey -v -keystore my-upload-key.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=HermesMobile, OU=Mobile, O=Nous, L=SF, S=CA, C=US"
+            fi
+          fi
+
+      - name: Build Release and Debug APKs
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'android' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'android' }}
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+        run: |
+          echo "=== Building APKs with Gradle ==="
+          gradle :app:assembleRelease :app:assembleDebug --stacktrace
+
+      - name: Organize & Package Release Artifacts
+        id: prepare_artifacts
+        run: |
+          mkdir -p release-output
+
+          # Determine Tag/Version string
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v1.0.0-${GITHUB_SHA::7}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_OUTPUT
+
+          echo "Packaging APKs for tag $TAG..."
+
+          # Locate and copy release APK
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" "release-output/HermesMobile-${TAG}-release.apk"
+            echo "Found Release APK: release-output/HermesMobile-${TAG}-release.apk"
+          fi
+
+          # Locate and copy debug APK
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" "release-output/HermesMobile-${TAG}-debug.apk"
+            echo "Found Debug APK: release-output/HermesMobile-${TAG}-debug.apk"
+          fi
+
+          # Generate SHA256 Checksums
+          cd release-output
+          sha256sum *.apk > SHA256SUMS.txt
+          echo "Generated SHA256SUMS.txt:"
+          cat SHA256SUMS.txt
+          cd ..
+
+      - name: Upload Build Artifacts (Workflow Run Summary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-mobile-apks-${{ steps.prepare_artifacts.outputs.RELEASE_TAG }}
+          path: release-output/
+          retention-days: 30
+
+      - name: Create GitHub Release and Upload APK Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
+        with:
+          tag_name: ${{ steps.prepare_artifacts.outputs.RELEASE_TAG }}
+          name: ${{ github.event.inputs.release_title || steps.prepare_artifacts.outputs.RELEASE_TAG }}
+          draft: ${{ github.event.inputs.is_draft || false }}
+          prerelease: ${{ github.event.inputs.is_prerelease || false }}
+          files: |
+            release-output/*.apk
+            release-output/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## 🚀 Hermes Mobile Release: ${{ steps.prepare_artifacts.outputs.RELEASE_TAG }}
+
+            ### 📦 Included Artifacts
+            - **Production Release APK**: `HermesMobile-${{ steps.prepare_artifacts.outputs.RELEASE_TAG }}-release.apk`
+            - **Debug / Testing APK**: `HermesMobile-${{ steps.prepare_artifacts.outputs.RELEASE_TAG }}-debug.apk`
+            - **SHA256 Integrity Verification**: `SHA256SUMS.txt`
+
+            ### 🔐 Checksums
+            Verify package authenticity after download:
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
